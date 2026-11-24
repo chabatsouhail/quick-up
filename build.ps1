@@ -9,9 +9,18 @@ Set-Location -Path $PSScriptRoot
 
 Write-Host "== Dynamic Web Panel (.NET 10 + WebView2) build ==" -ForegroundColor Cyan
 
-$unpackedDir = Join-Path $PSScriptRoot 'dist\win-unpacked'
-$portableTmp = Join-Path $PSScriptRoot 'dist\_portable_tmp'
-$portableExe = Join-Path $PSScriptRoot 'dist\DynamicWebPanel.exe'
+$distRoot = Join-Path $PSScriptRoot 'dist'
+$unpackedDir = Join-Path $distRoot 'win-unpacked'
+$portableTmp = Join-Path $distRoot '_portable_tmp'
+$portableExe = Join-Path $distRoot 'DynamicWebPanel.exe'
+
+Get-Process -Name 'DynamicWebPanel' -ErrorAction SilentlyContinue | Where-Object {
+    $_.Path -and $_.Path.StartsWith($distRoot, [System.StringComparison]::OrdinalIgnoreCase)
+} | ForEach-Object {
+    Write-Host "Stopping running instance (PID $($_.Id)) before rebuild..." -ForegroundColor Yellow
+    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+    $_.WaitForExit(3000) | Out-Null
+}
 
 foreach ($dir in @($unpackedDir, $portableTmp)) {
     if (Test-Path $dir) {
