@@ -5,7 +5,8 @@ using System.Drawing.Drawing2D;
 namespace QuickUp;
 
 /// <summary>
-/// Antigravity-inspired two-pane native WinForms settings window using Tabler outline icons.
+/// Antigravity-inspired two-pane native WinForms settings window using Tabler outline icons
+/// and explicit DPI-scaled dynamic stacking to prevent clipping or overlap at any display scale.
 /// </summary>
 internal sealed class SettingsForm : Form
 {
@@ -19,6 +20,7 @@ internal sealed class SettingsForm : Form
     private readonly AppSettings _originalSettings;
     private ThemePalette _palette;
     private SettingsSection _activeSection = SettingsSection.General;
+    private float _s = 1f;
 
     private string _customIconLight = string.Empty;
     private bool _isPresetLight;
@@ -108,94 +110,77 @@ internal sealed class SettingsForm : Form
         _customIconDark = _originalSettings.CustomIconDark;
         _isPresetDark = _originalSettings.IsPresetIconDark;
 
-        AutoScaleDimensions = new SizeF(96F, 96F);
-        AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(720, 560);
+        Screen targetScreen = Screen.FromPoint(Cursor.Position);
+        Point screenCenter = new(
+            targetScreen.WorkingArea.Left + targetScreen.WorkingArea.Width / 2,
+            targetScreen.WorkingArea.Top + targetScreen.WorkingArea.Height / 2);
+        int targetDpi = NativeMethods.GetDpiForPoint(screenCenter);
+        _s = Math.Max(1f, Math.Max(DeviceDpi, targetDpi) / 96f);
+
+        AutoScaleMode = AutoScaleMode.None;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
-        StartPosition = FormStartPosition.CenterScreen;
+        StartPosition = FormStartPosition.Manual;
         Text = "Settings — Dynamic Web Panel";
         Icon = IconHelper.GetDefaultAppIcon();
         Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
 
         // ---------------------------------------------------------------------
-        // Left Sidebar (196px)
+        // Left Sidebar
         // ---------------------------------------------------------------------
-        _sidebarPanel = new SidebarPanel(_brandBitmap)
-        {
-            Dock = DockStyle.Left,
-            Width = 196
-        };
+        _sidebarPanel = new SidebarPanel(_brandBitmap) { Dock = DockStyle.Left };
 
-        _navGeneral = new NavRailButton(TablerIcon.AdjustmentsHorizontal, "General")
-        {
-            Location = new Point(12, 76),
-            Size = new Size(172, 38)
-        };
+        _navGeneral = new NavRailButton(TablerIcon.AdjustmentsHorizontal, "General");
         _navGeneral.Click += (_, _) => SwitchSection(SettingsSection.General);
 
-        _navAppearance = new NavRailButton(TablerIcon.Palette, "Appearance")
-        {
-            Location = new Point(12, 120),
-            Size = new Size(172, 38)
-        };
+        _navAppearance = new NavRailButton(TablerIcon.Palette, "Appearance");
         _navAppearance.Click += (_, _) => SwitchSection(SettingsSection.Appearance);
 
-        _navBehavior = new NavRailButton(TablerIcon.AppWindow, "Behavior")
-        {
-            Location = new Point(12, 164),
-            Size = new Size(172, 38)
-        };
+        _navBehavior = new NavRailButton(TablerIcon.AppWindow, "Behavior");
         _navBehavior.Click += (_, _) => SwitchSection(SettingsSection.Behavior);
 
         _lblSidebarVersion = new Label
         {
             Text = "v2.0 · .NET 10 · WebView2",
-            Location = new Point(16, 524),
-            Size = new Size(164, 20),
-            Anchor = AnchorStyles.Left | AnchorStyles.Bottom,
+            Dock = DockStyle.Bottom,
+            TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true,
             Font = new Font("Segoe UI", 8f, FontStyle.Regular)
         };
 
         _sidebarPanel.Controls.AddRange([_navGeneral, _navAppearance, _navBehavior, _lblSidebarVersion]);
 
         // ---------------------------------------------------------------------
-        // Right Pane (Footer + Scrollable Content)
+        // Right Pane (Footer + Scrollable Section Host)
         // ---------------------------------------------------------------------
         _mainPane = new Panel { Dock = DockStyle.Fill };
 
-        _footerPanel = new FooterPanel
-        {
-            Dock = DockStyle.Bottom,
-            Height = 60
-        };
+        _footerPanel = new FooterPanel { Dock = DockStyle.Bottom };
 
         _lblFooterHint = new Label
         {
             Text = "Changes apply immediately after saving",
-            Location = new Point(28, 20),
-            Size = new Size(250, 20),
+            AutoEllipsis = true,
+            TextAlign = ContentAlignment.MiddleLeft,
             Font = new Font("Segoe UI", 8.5f, FontStyle.Regular)
         };
 
         _btnCancel = new ModernButton(ModernButtonKind.Secondary)
         {
             Text = "Cancel",
-            DialogResult = DialogResult.Cancel,
-            Size = new Size(92, 34)
+            DialogResult = DialogResult.Cancel
         };
         _btnCancel.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
 
         _btnSave = new ModernButton(ModernButtonKind.Primary)
         {
-            Text = "Save Changes",
-            Size = new Size(124, 34)
+            Text = "Save Changes"
         };
         _btnSave.Click += BtnSave_Click;
 
         _footerPanel.Controls.AddRange([_lblFooterHint, _btnCancel, _btnSave]);
-        _footerPanel.Resize += (_, _) => PositionFooterButtons();
+        _footerPanel.Resize += (_, _) => LayoutFooter();
 
         _scrollHost = new Panel
         {
@@ -203,49 +188,28 @@ internal sealed class SettingsForm : Form
             AutoScroll = true
         };
 
-        const int contentLeft = 28;
-        const int cardW = 468;
-
         // ---------------------------------------------------------------------
         // Section 1: General
         // ---------------------------------------------------------------------
-        _secGeneral = new Panel
-        {
-            Location = new Point(0, 0),
-            Size = new Size(524, 480)
-        };
+        _secGeneral = new Panel();
+        _lblGenHeading = CreateSectionHeading("General");
+        _lblGenSub = CreateSectionSubtitle("Configure the web application URL, title, and startup preference.");
 
-        _lblGenHeading = CreateSectionHeading("General", contentLeft, 22);
-        _lblGenSub = CreateSectionSubtitle("Configure the web application URL, title, and startup preference.", contentLeft, 50, cardW);
-
-        _cardWebApp = new RoundedCard
-        {
-            Location = new Point(contentLeft, 84),
-            Size = new Size(cardW, 208)
-        };
-
-        _lblUrlTitle = CreateFieldHeading("Link URL", 18, 16);
-        _lblUrlDesc = CreateFieldDescription("Web address (https://) to load inside the popup panel.", 18, 36, cardW - 36);
+        _cardWebApp = new RoundedCard();
+        _lblUrlTitle = CreateFieldHeading("Link URL");
+        _lblUrlDesc = CreateFieldDescription("Web address (https://) to load inside the popup panel.");
         _txtUrl = new OutlinedTextBox(TablerIcon.Link)
         {
-            Location = new Point(18, 60),
-            Size = new Size(cardW - 36, 34),
             PlaceholderText = "https://notion.so",
             Text = _originalSettings.CustomUrl
         };
 
-        _webAppDivider = new Panel
-        {
-            Location = new Point(18, 108),
-            Size = new Size(cardW - 36, 1)
-        };
+        _webAppDivider = new Panel();
 
-        _lblTitleHeading = CreateFieldHeading("Panel Title", 18, 120);
-        _lblTitleDesc = CreateFieldDescription("Custom title shown in the panel header and tray tooltip.", 18, 140, cardW - 36);
+        _lblTitleHeading = CreateFieldHeading("Panel Title");
+        _lblTitleDesc = CreateFieldDescription("Custom title shown in the panel header and tray tooltip.");
         _txtTitle = new OutlinedTextBox(null)
         {
-            Location = new Point(18, 158),
-            Size = new Size(cardW - 36, 34),
             PlaceholderText = "Dynamic Web Panel",
             Text = _originalSettings.CustomTitle
         };
@@ -256,20 +220,10 @@ internal sealed class SettingsForm : Form
             _lblTitleHeading, _lblTitleDesc, _txtTitle
         ]);
 
-        _cardSystem = new RoundedCard
-        {
-            Location = new Point(contentLeft, 306),
-            Size = new Size(cardW, 68)
-        };
-
-        _lblStartupHeading = CreateFieldHeading("Start with Windows", 18, 14);
-        _lblStartupDesc = CreateFieldDescription("Launch silently in the tray when you sign in to Windows.", 18, 34, 360);
-        _tglStartup = new ToggleSwitch
-        {
-            Location = new Point(cardW - 18 - 42, 23),
-            Size = new Size(42, 22),
-            Checked = _originalSettings.OpenAtLogin
-        };
+        _cardSystem = new RoundedCard();
+        _lblStartupHeading = CreateFieldHeading("Start with Windows");
+        _lblStartupDesc = CreateFieldDescription("Launch silently in the tray when you sign in to Windows.");
+        _tglStartup = new ToggleSwitch { Checked = _originalSettings.OpenAtLogin };
         _cardSystem.Controls.AddRange([_lblStartupHeading, _lblStartupDesc, _tglStartup]);
 
         _secGeneral.Controls.AddRange([_lblGenHeading, _lblGenSub, _cardWebApp, _cardSystem]);
@@ -277,23 +231,12 @@ internal sealed class SettingsForm : Form
         // ---------------------------------------------------------------------
         // Section 2: Appearance
         // ---------------------------------------------------------------------
-        _secAppearance = new Panel
-        {
-            Location = new Point(0, 0),
-            Size = new Size(524, 480),
-            Visible = false
-        };
+        _secAppearance = new Panel { Visible = false };
+        _lblAppHeading = CreateSectionHeading("Appearance");
+        _lblAppSub = CreateSectionSubtitle("Customize your taskbar tray icon and popup panel width.");
 
-        _lblAppHeading = CreateSectionHeading("Appearance", contentLeft, 22);
-        _lblAppSub = CreateSectionSubtitle("Customize your taskbar tray icon and popup panel width.", contentLeft, 50, cardW);
-
-        _cardTrayIcon = new RoundedCard
-        {
-            Location = new Point(contentLeft, 84),
-            Size = new Size(cardW, 214)
-        };
-
-        _lblTrayIconHeading = CreateFieldHeading("System Tray Icon", 18, 14);
+        _cardTrayIcon = new RoundedCard();
+        _lblTrayIconHeading = CreateFieldHeading("System Tray Icon");
 
         _segIconTheme = new SegmentedControl<string>(
         [
@@ -301,8 +244,6 @@ internal sealed class SettingsForm : Form
             new SegmentOption<string>("Dark Taskbar", "dark", TablerIcon.Moon)
         ])
         {
-            Location = new Point(18, 38),
-            Size = new Size(cardW - 36, 32),
             SelectedValue = "light"
         };
         _segIconTheme.SelectedValueChanged += (_, _) =>
@@ -313,15 +254,9 @@ internal sealed class SettingsForm : Form
             }
         };
 
-        _previewBox = new PreviewTilePanel
-        {
-            Location = new Point(18, 82),
-            Size = new Size(46, 46)
-        };
+        _previewBox = new PreviewTilePanel();
         _picPreview = new PictureBox
         {
-            Location = new Point(9, 9),
-            Size = new Size(28, 28),
             SizeMode = PictureBoxSizeMode.Zoom,
             BackColor = Color.Transparent
         };
@@ -329,32 +264,21 @@ internal sealed class SettingsForm : Form
 
         _btnUpload = new ModernButton(ModernButtonKind.Secondary, TablerIcon.Upload)
         {
-            Text = "Upload Image",
-            Location = new Point(76, 89),
-            Size = new Size(128, 32)
+            Text = "Upload Image"
         };
         _btnUpload.Click += BtnUpload_Click;
 
         _btnResetIcon = new ModernButton(ModernButtonKind.GhostDanger, TablerIcon.Restore)
         {
-            Text = "Restore Default",
-            Location = new Point(212, 89),
-            Size = new Size(134, 32)
+            Text = "Restore Default"
         };
         _btnResetIcon.Click += BtnResetIcon_Click;
 
-        _lblPresets = CreateFieldDescription("Or choose a Tabler preset icon:", 18, 138, cardW - 36);
+        _lblPresets = CreateFieldDescription("Or choose a Tabler preset icon:");
 
-        int presetGap = 7;
-        int presetW = (cardW - 36 - (7 * presetGap)) / 8;
-        for (int i = 0; i < IconHelper.PresetKeys.Length; i++)
+        foreach (string key in IconHelper.PresetKeys)
         {
-            string key = IconHelper.PresetKeys[i];
-            var pBtn = new PresetIconButton(key)
-            {
-                Location = new Point(18 + i * (presetW + presetGap), 160),
-                Size = new Size(presetW, 38)
-            };
+            var pBtn = new PresetIconButton(key);
             pBtn.Click += (_, _) => SelectPreset(key);
             _presetButtons.Add(pBtn);
             _cardTrayIcon.Controls.Add(pBtn);
@@ -364,14 +288,9 @@ internal sealed class SettingsForm : Form
             _lblTrayIconHeading, _segIconTheme, _previewBox, _btnUpload, _btnResetIcon, _lblPresets
         ]);
 
-        _cardDimensions = new RoundedCard
-        {
-            Location = new Point(contentLeft, 312),
-            Size = new Size(cardW, 108)
-        };
-
-        _lblWidthHeading = CreateFieldHeading("Popup Width", 18, 14);
-        _lblWidthDesc = CreateFieldDescription("Width of the tray popup panel in logical pixels.", 18, 34, cardW - 36);
+        _cardDimensions = new RoundedCard();
+        _lblWidthHeading = CreateFieldHeading("Popup Width");
+        _lblWidthDesc = CreateFieldDescription("Width of the tray popup panel in logical pixels.");
 
         var widthOptions = new List<SegmentOption<int>>
         {
@@ -386,8 +305,6 @@ internal sealed class SettingsForm : Form
 
         _segWidth = new SegmentedControl<int>(widthOptions)
         {
-            Location = new Point(18, 60),
-            Size = new Size(cardW - 36, 32),
             SelectedValue = _originalSettings.PopupWidth
         };
 
@@ -397,52 +314,26 @@ internal sealed class SettingsForm : Form
         // ---------------------------------------------------------------------
         // Section 3: Behavior
         // ---------------------------------------------------------------------
-        _secBehavior = new Panel
-        {
-            Location = new Point(0, 0),
-            Size = new Size(524, 480),
-            Visible = false
-        };
+        _secBehavior = new Panel { Visible = false };
+        _lblBehHeading = CreateSectionHeading("Behavior");
+        _lblBehSub = CreateSectionSubtitle("Control how links open and how memory is reclaimed while idle.");
 
-        _lblBehHeading = CreateSectionHeading("Behavior", contentLeft, 22);
-        _lblBehSub = CreateSectionSubtitle("Control how links open and how memory is reclaimed while idle.", contentLeft, 50, cardW);
-
-        _cardLinks = new RoundedCard
-        {
-            Location = new Point(contentLeft, 84),
-            Size = new Size(cardW, 110)
-        };
-
-        _lblLinkHeading = CreateFieldHeading("Link Click Behavior", 18, 14);
-        _lblLinkDesc = CreateFieldDescription("Ctrl+Click or middle-click always opens in your default browser.", 18, 34, cardW - 36);
+        _cardLinks = new RoundedCard();
+        _lblLinkHeading = CreateFieldHeading("Link Click Behavior");
+        _lblLinkDesc = CreateFieldDescription("Ctrl+Click or middle-click always opens in your default browser.");
         _segLinkBehavior = new SegmentedControl<string>(
         [
             new SegmentOption<string>("Inside Panel", "popup"),
             new SegmentOption<string>("Default Browser", "browser")
         ])
         {
-            Location = new Point(18, 62),
-            Size = new Size(cardW - 36, 32),
             SelectedValue = _originalSettings.LinkBehavior == "browser" ? "browser" : "popup"
         };
         _cardLinks.Controls.AddRange([_lblLinkHeading, _lblLinkDesc, _segLinkBehavior]);
 
-        _cardMemory = new RoundedCard
-        {
-            Location = new Point(contentLeft, 208),
-            Size = new Size(cardW, 118)
-        };
-
-        _hdrMemory = new IconHeadingRow(TablerIcon.Bolt, "Idle WebView Teardown")
-        {
-            Location = new Point(18, 14),
-            Size = new Size(cardW - 36, 22)
-        };
-        _lblMemoryDesc = CreateFieldDescription(
-            "Disposes WebView2 after staying hidden so idle RAM returns to near zero.",
-            18,
-            38,
-            cardW - 36);
+        _cardMemory = new RoundedCard();
+        _hdrMemory = new IconHeadingRow(TablerIcon.Bolt, "Idle WebView Teardown");
+        _lblMemoryDesc = CreateFieldDescription("Disposes WebView2 after staying hidden so idle RAM returns to near zero.");
 
         var teardownOptions = new List<SegmentOption<int>>
         {
@@ -458,15 +349,15 @@ internal sealed class SettingsForm : Form
 
         _segIdleTeardown = new SegmentedControl<int>(teardownOptions)
         {
-            Location = new Point(18, 68),
-            Size = new Size(cardW - 36, 32),
             SelectedValue = _originalSettings.IdleTeardownSeconds
         };
         _cardMemory.Controls.AddRange([_hdrMemory, _lblMemoryDesc, _segIdleTeardown]);
 
         _secBehavior.Controls.AddRange([_lblBehHeading, _lblBehSub, _cardLinks, _cardMemory]);
 
-        // Assemble layout
+        // ---------------------------------------------------------------------
+        // Assemble & Layout
+        // ---------------------------------------------------------------------
         _scrollHost.Controls.AddRange([_secGeneral, _secAppearance, _secBehavior]);
         _mainPane.Controls.Add(_scrollHost);
         _mainPane.Controls.Add(_footerPanel);
@@ -477,7 +368,15 @@ internal sealed class SettingsForm : Form
         AcceptButton = _btnSave;
         CancelButton = _btnCancel;
 
-        PositionFooterButtons();
+        LayoutAllControls();
+        CenterOnScreen(targetScreen);
+
+        Shown += (_, _) =>
+        {
+            _txtUrl.ClearSelection();
+            _txtTitle.ClearSelection();
+        };
+
         SwitchSection(SettingsSection.General);
         ApplyTheme();
         RefreshPreviewImage();
@@ -487,6 +386,21 @@ internal sealed class SettingsForm : Form
     {
         base.OnHandleCreated(e);
         NativeMethods.ApplyDarkTitleBar(Handle, _palette.IsDark);
+
+        float actualScale = Math.Max(1f, DeviceDpi / 96f);
+        if (Math.Abs(actualScale - _s) > 0.02f)
+        {
+            _s = actualScale;
+            LayoutAllControls();
+            CenterOnScreen(Screen.FromHandle(Handle));
+        }
+    }
+
+    protected override void OnDpiChanged(DpiChangedEventArgs e)
+    {
+        base.OnDpiChanged(e);
+        _s = Math.Max(1f, e.DeviceDpiNew / 96f);
+        LayoutAllControls();
     }
 
     public void ApplyTheme()
@@ -501,10 +415,10 @@ internal sealed class SettingsForm : Form
         BackColor = _palette.CanvasBackground;
         ForeColor = _palette.TextPrimary;
 
-        _sidebarPanel.UpdateTheme(_palette);
-        _navGeneral.UpdateTheme(_palette);
-        _navAppearance.UpdateTheme(_palette);
-        _navBehavior.UpdateTheme(_palette);
+        _sidebarPanel.UpdateTheme(_palette, _s);
+        _navGeneral.UpdateTheme(_palette, _s);
+        _navAppearance.UpdateTheme(_palette, _s);
+        _navBehavior.UpdateTheme(_palette, _s);
         _lblSidebarVersion.ForeColor = _palette.TextMuted;
 
         _mainPane.BackColor = _palette.CanvasBackground;
@@ -515,8 +429,8 @@ internal sealed class SettingsForm : Form
 
         _footerPanel.UpdateTheme(_palette);
         _lblFooterHint.ForeColor = _palette.TextMuted;
-        _btnCancel.UpdateTheme(_palette);
-        _btnSave.UpdateTheme(_palette);
+        _btnCancel.UpdateTheme(_palette, _s);
+        _btnSave.UpdateTheme(_palette, _s);
 
         foreach (Label h in new[] { _lblGenHeading, _lblAppHeading, _lblBehHeading })
         {
@@ -529,7 +443,7 @@ internal sealed class SettingsForm : Form
 
         foreach (RoundedCard card in new[] { _cardWebApp, _cardSystem, _cardTrayIcon, _cardDimensions, _cardLinks, _cardMemory })
         {
-            card.UpdateTheme(_palette);
+            card.UpdateTheme(_palette, _s);
         }
 
         foreach (Label fh in new[] { _lblUrlTitle, _lblTitleHeading, _lblStartupHeading, _lblTrayIconHeading, _lblWidthHeading, _lblLinkHeading })
@@ -542,23 +456,23 @@ internal sealed class SettingsForm : Form
         }
 
         _webAppDivider.BackColor = _palette.Border;
-        _txtUrl.UpdateTheme(_palette);
-        _txtTitle.UpdateTheme(_palette);
-        _tglStartup.UpdateTheme(_palette);
+        _txtUrl.UpdateTheme(_palette, _s);
+        _txtTitle.UpdateTheme(_palette, _s);
+        _tglStartup.UpdateTheme(_palette, _s);
 
-        _segIconTheme.UpdateTheme(_palette);
+        _segIconTheme.UpdateTheme(_palette, _s);
         UpdatePreviewContainerColor();
-        _btnUpload.UpdateTheme(_palette);
-        _btnResetIcon.UpdateTheme(_palette);
+        _btnUpload.UpdateTheme(_palette, _s);
+        _btnResetIcon.UpdateTheme(_palette, _s);
         foreach (PresetIconButton btn in _presetButtons)
         {
-            btn.UpdateTheme(_palette);
+            btn.UpdateTheme(_palette, _s);
         }
 
-        _segWidth.UpdateTheme(_palette);
-        _segLinkBehavior.UpdateTheme(_palette);
-        _hdrMemory.UpdateTheme(_palette);
-        _segIdleTeardown.UpdateTheme(_palette);
+        _segWidth.UpdateTheme(_palette, _s);
+        _segLinkBehavior.UpdateTheme(_palette, _s);
+        _hdrMemory.UpdateTheme(_palette, _s);
+        _segIdleTeardown.UpdateTheme(_palette, _s);
     }
 
     protected override void Dispose(bool disposing)
@@ -571,6 +485,273 @@ internal sealed class SettingsForm : Form
             _brandBitmap.Dispose();
         }
         base.Dispose(disposing);
+    }
+
+    private int Dp(float dip) => (int)Math.Round(dip * _s);
+
+    private void CenterOnScreen(Screen screen)
+    {
+        Rectangle area = screen.WorkingArea;
+        int x = area.Left + Math.Max(0, (area.Width - Width) / 2);
+        int y = area.Top + Math.Max(0, (area.Height - Height) / 2);
+        Location = new Point(x, y);
+    }
+
+    private void LayoutAllControls()
+    {
+        int clientW = Dp(740);
+        int clientH = Dp(580);
+        int sidebarW = Dp(196);
+        int paneW = clientW - sidebarW;
+        int contentPadX = Dp(28);
+        int cardW = paneW - (contentPadX * 2);
+
+        ClientSize = new Size(clientW, clientH);
+
+        // Sidebar
+        _sidebarPanel.Width = sidebarW;
+        _sidebarPanel.UpdateTheme(_palette, _s);
+
+        int navX = Dp(12);
+        int navW = sidebarW - (navX * 2);
+        int navH = Math.Max(Dp(38), Font.Height + Dp(16));
+        int navTop = Dp(78);
+        int navGap = Dp(6);
+
+        _navGeneral.SetBounds(navX, navTop, navW, navH);
+        _navAppearance.SetBounds(navX, navTop + (navH + navGap), navW, navH);
+        _navBehavior.SetBounds(navX, navTop + 2 * (navH + navGap), navW, navH);
+
+        _lblSidebarVersion.Height = Math.Max(Dp(34), _lblSidebarVersion.Font.Height + Dp(14));
+        _lblSidebarVersion.Padding = new Padding(Dp(16), 0, Dp(12), Dp(8));
+
+        // Footer
+        _btnSave.UpdateTheme(_palette, _s);
+        _btnCancel.UpdateTheme(_palette, _s);
+        _btnSave.Size = _btnSave.MeasurePreferredSize(_s);
+        _btnCancel.Size = _btnCancel.MeasurePreferredSize(_s);
+        _footerPanel.Height = Math.Max(Dp(60), _btnSave.Height + Dp(24));
+        LayoutFooter();
+
+        // Sections
+        LayoutGeneralSection(paneW, contentPadX, cardW);
+        LayoutAppearanceSection(paneW, contentPadX, cardW);
+        LayoutBehaviorSection(paneW, contentPadX, cardW);
+    }
+
+    private void LayoutFooter()
+    {
+        int rightMargin = Dp(28);
+        int leftMargin = Dp(28);
+        int gap = Dp(10);
+        int centerY = (_footerPanel.ClientSize.Height - _btnSave.Height) / 2;
+
+        _btnSave.Location = new Point(_footerPanel.ClientSize.Width - rightMargin - _btnSave.Width, centerY);
+        _btnCancel.Location = new Point(_btnSave.Left - gap - _btnCancel.Width, centerY);
+
+        int hintH = Math.Max(Dp(20), _lblFooterHint.Font.Height + Dp(4));
+        int hintW = Math.Max(Dp(80), _btnCancel.Left - leftMargin - Dp(16));
+        _lblFooterHint.SetBounds(leftMargin, (_footerPanel.ClientSize.Height - hintH) / 2, hintW, hintH);
+    }
+
+    private void LayoutGeneralSection(int paneW, int contentLeft, int cardW)
+    {
+        int padX = Dp(18);
+        int innerW = cardW - (padX * 2);
+        int y = Dp(22);
+
+        _lblGenHeading.MaximumSize = new Size(cardW, 0);
+        _lblGenHeading.Location = new Point(contentLeft, y);
+        y += _lblGenHeading.PreferredSize.Height + Dp(4);
+
+        _lblGenSub.MaximumSize = new Size(cardW, 0);
+        _lblGenSub.Location = new Point(contentLeft, y);
+        y += _lblGenSub.PreferredSize.Height + Dp(16);
+
+        // Card 1: Web Application
+        int cy = Dp(16);
+        _lblUrlTitle.MaximumSize = new Size(innerW, 0);
+        _lblUrlTitle.Location = new Point(padX, cy);
+        cy += _lblUrlTitle.PreferredSize.Height + Dp(3);
+
+        _lblUrlDesc.MaximumSize = new Size(innerW, 0);
+        _lblUrlDesc.Location = new Point(padX, cy);
+        cy += _lblUrlDesc.PreferredSize.Height + Dp(8);
+
+        _txtUrl.UpdateTheme(_palette, _s);
+        _txtUrl.SetBounds(padX, cy, innerW, _txtUrl.PreferredControlHeight);
+        cy = _txtUrl.Bottom + Dp(14);
+
+        _webAppDivider.SetBounds(padX, cy, innerW, 1);
+        cy += 1 + Dp(14);
+
+        _lblTitleHeading.MaximumSize = new Size(innerW, 0);
+        _lblTitleHeading.Location = new Point(padX, cy);
+        cy += _lblTitleHeading.PreferredSize.Height + Dp(3);
+
+        _lblTitleDesc.MaximumSize = new Size(innerW, 0);
+        _lblTitleDesc.Location = new Point(padX, cy);
+        cy += _lblTitleDesc.PreferredSize.Height + Dp(8);
+
+        _txtTitle.UpdateTheme(_palette, _s);
+        _txtTitle.SetBounds(padX, cy, innerW, _txtTitle.PreferredControlHeight);
+        cy = _txtTitle.Bottom + Dp(16);
+
+        _cardWebApp.SetBounds(contentLeft, y, cardW, cy);
+        y = _cardWebApp.Bottom + Dp(14);
+
+        // Card 2: System
+        int toggleW = Dp(44);
+        int toggleH = Dp(24);
+        int textMaxW = innerW - toggleW - Dp(16);
+        int sy = Dp(14);
+
+        _lblStartupHeading.MaximumSize = new Size(textMaxW, 0);
+        _lblStartupHeading.Location = new Point(padX, sy);
+        sy += _lblStartupHeading.PreferredSize.Height + Dp(3);
+
+        _lblStartupDesc.MaximumSize = new Size(textMaxW, 0);
+        _lblStartupDesc.Location = new Point(padX, sy);
+        sy += _lblStartupDesc.PreferredSize.Height + Dp(14);
+
+        int sysCardH = Math.Max(sy, toggleH + Dp(28));
+        _tglStartup.SetBounds(cardW - padX - toggleW, (sysCardH - toggleH) / 2, toggleW, toggleH);
+        _cardSystem.SetBounds(contentLeft, y, cardW, sysCardH);
+        y = _cardSystem.Bottom + Dp(20);
+
+        _secGeneral.SetBounds(0, 0, paneW, y);
+    }
+
+    private void LayoutAppearanceSection(int paneW, int contentLeft, int cardW)
+    {
+        int padX = Dp(18);
+        int innerW = cardW - (padX * 2);
+        int y = Dp(22);
+
+        _lblAppHeading.MaximumSize = new Size(cardW, 0);
+        _lblAppHeading.Location = new Point(contentLeft, y);
+        y += _lblAppHeading.PreferredSize.Height + Dp(4);
+
+        _lblAppSub.MaximumSize = new Size(cardW, 0);
+        _lblAppSub.Location = new Point(contentLeft, y);
+        y += _lblAppSub.PreferredSize.Height + Dp(16);
+
+        // Card 1: System Tray Icon
+        int cy = Dp(16);
+        _lblTrayIconHeading.MaximumSize = new Size(innerW, 0);
+        _lblTrayIconHeading.Location = new Point(padX, cy);
+        cy += _lblTrayIconHeading.PreferredSize.Height + Dp(10);
+
+        int segH = Math.Max(Dp(34), Font.Height + Dp(14));
+        _segIconTheme.UpdateTheme(_palette, _s);
+        _segIconTheme.SetBounds(padX, cy, innerW, segH);
+        cy = _segIconTheme.Bottom + Dp(12);
+
+        int previewSize = Dp(48);
+        int picSize = Dp(30);
+        _previewBox.SetBounds(padX, cy, previewSize, previewSize);
+        _picPreview.SetBounds((previewSize - picSize) / 2, (previewSize - picSize) / 2, picSize, picSize);
+
+        _btnUpload.UpdateTheme(_palette, _s);
+        _btnResetIcon.UpdateTheme(_palette, _s);
+        _btnUpload.Size = _btnUpload.MeasurePreferredSize(_s);
+        _btnResetIcon.Size = _btnResetIcon.MeasurePreferredSize(_s);
+
+        int btnY = cy + (previewSize - _btnUpload.Height) / 2;
+        _btnUpload.Location = new Point(_previewBox.Right + Dp(12), btnY);
+        _btnResetIcon.Location = new Point(_btnUpload.Right + Dp(8), btnY);
+
+        cy = _previewBox.Bottom + Dp(14);
+
+        _lblPresets.MaximumSize = new Size(innerW, 0);
+        _lblPresets.Location = new Point(padX, cy);
+        cy += _lblPresets.PreferredSize.Height + Dp(8);
+
+        int presetGap = Dp(7);
+        int presetCount = _presetButtons.Count;
+        int presetW = (innerW - ((presetCount - 1) * presetGap)) / presetCount;
+        int presetH = Dp(40);
+
+        for (int i = 0; i < presetCount; i++)
+        {
+            _presetButtons[i].SetBounds(padX + i * (presetW + presetGap), cy, presetW, presetH);
+        }
+        cy += presetH + Dp(16);
+
+        _cardTrayIcon.SetBounds(contentLeft, y, cardW, cy);
+        y = _cardTrayIcon.Bottom + Dp(14);
+
+        // Card 2: Popup Dimensions
+        int dy = Dp(16);
+        _lblWidthHeading.MaximumSize = new Size(innerW, 0);
+        _lblWidthHeading.Location = new Point(padX, dy);
+        dy += _lblWidthHeading.PreferredSize.Height + Dp(3);
+
+        _lblWidthDesc.MaximumSize = new Size(innerW, 0);
+        _lblWidthDesc.Location = new Point(padX, dy);
+        dy += _lblWidthDesc.PreferredSize.Height + Dp(10);
+
+        _segWidth.UpdateTheme(_palette, _s);
+        _segWidth.SetBounds(padX, dy, innerW, segH);
+        dy = _segWidth.Bottom + Dp(16);
+
+        _cardDimensions.SetBounds(contentLeft, y, cardW, dy);
+        y = _cardDimensions.Bottom + Dp(20);
+
+        _secAppearance.SetBounds(0, 0, paneW, y);
+    }
+
+    private void LayoutBehaviorSection(int paneW, int contentLeft, int cardW)
+    {
+        int padX = Dp(18);
+        int innerW = cardW - (padX * 2);
+        int y = Dp(22);
+
+        _lblBehHeading.MaximumSize = new Size(cardW, 0);
+        _lblBehHeading.Location = new Point(contentLeft, y);
+        y += _lblBehHeading.PreferredSize.Height + Dp(4);
+
+        _lblBehSub.MaximumSize = new Size(cardW, 0);
+        _lblBehSub.Location = new Point(contentLeft, y);
+        y += _lblBehSub.PreferredSize.Height + Dp(16);
+
+        int segH = Math.Max(Dp(34), Font.Height + Dp(14));
+
+        // Card 1: Link Click Behavior
+        int cy = Dp(16);
+        _lblLinkHeading.MaximumSize = new Size(innerW, 0);
+        _lblLinkHeading.Location = new Point(padX, cy);
+        cy += _lblLinkHeading.PreferredSize.Height + Dp(3);
+
+        _lblLinkDesc.MaximumSize = new Size(innerW, 0);
+        _lblLinkDesc.Location = new Point(padX, cy);
+        cy += _lblLinkDesc.PreferredSize.Height + Dp(10);
+
+        _segLinkBehavior.UpdateTheme(_palette, _s);
+        _segLinkBehavior.SetBounds(padX, cy, innerW, segH);
+        cy = _segLinkBehavior.Bottom + Dp(16);
+
+        _cardLinks.SetBounds(contentLeft, y, cardW, cy);
+        y = _cardLinks.Bottom + Dp(14);
+
+        // Card 2: Memory & Performance
+        int my = Dp(16);
+        _hdrMemory.UpdateTheme(_palette, _s);
+        _hdrMemory.SetBounds(padX, my, innerW, Math.Max(Dp(24), Font.Height + Dp(4)));
+        my = _hdrMemory.Bottom + Dp(4);
+
+        _lblMemoryDesc.MaximumSize = new Size(innerW, 0);
+        _lblMemoryDesc.Location = new Point(padX, my);
+        my += _lblMemoryDesc.PreferredSize.Height + Dp(10);
+
+        _segIdleTeardown.UpdateTheme(_palette, _s);
+        _segIdleTeardown.SetBounds(padX, my, innerW, segH);
+        my = _segIdleTeardown.Bottom + Dp(16);
+
+        _cardMemory.SetBounds(contentLeft, y, cardW, my);
+        y = _cardMemory.Bottom + Dp(20);
+
+        _secBehavior.SetBounds(0, 0, paneW, y);
     }
 
     private void SwitchSection(SettingsSection section)
@@ -586,14 +767,6 @@ internal sealed class SettingsForm : Form
         _scrollHost.AutoScrollPosition = Point.Empty;
     }
 
-    private void PositionFooterButtons()
-    {
-        int right = _footerPanel.ClientSize.Width - 28;
-        int top = (_footerPanel.ClientSize.Height - _btnSave.Height) / 2;
-        _btnSave.Location = new Point(right - _btnSave.Width, top);
-        _btnCancel.Location = new Point(_btnSave.Left - 10 - _btnCancel.Width, top);
-    }
-
     private void SwitchIconTab(string tab)
     {
         _activeIconTab = tab;
@@ -606,7 +779,8 @@ internal sealed class SettingsForm : Form
     {
         _previewBox.UpdateAppearance(
             _activeIconTab == "dark" ? Color.FromArgb(15, 23, 42) : Color.White,
-            _palette.Border);
+            _palette.Border,
+            _s);
     }
 
     private void RefreshPreviewImage()
@@ -742,46 +916,43 @@ internal sealed class SettingsForm : Form
         Close();
     }
 
-    private static Label CreateSectionHeading(string text, int x, int y) => new()
+    private static Label CreateSectionHeading(string text) => new()
     {
         Text = text,
-        Location = new Point(x, y),
         AutoSize = true,
         Font = new Font("Segoe UI", 15f, FontStyle.Bold)
     };
 
-    private static Label CreateSectionSubtitle(string text, int x, int y, int width) => new()
+    private static Label CreateSectionSubtitle(string text) => new()
     {
         Text = text,
-        Location = new Point(x, y),
-        Size = new Size(width, 20),
+        AutoSize = true,
         Font = new Font("Segoe UI", 9f, FontStyle.Regular)
     };
 
-    private static Label CreateFieldHeading(string text, int x, int y) => new()
+    private static Label CreateFieldHeading(string text) => new()
     {
         Text = text,
-        Location = new Point(x, y),
         AutoSize = true,
         Font = new Font("Segoe UI", 9.5f, FontStyle.Bold)
     };
 
-    private static Label CreateFieldDescription(string text, int x, int y, int width) => new()
+    private static Label CreateFieldDescription(string text) => new()
     {
         Text = text,
-        Location = new Point(x, y),
-        Size = new Size(width, 18),
+        AutoSize = true,
         Font = new Font("Segoe UI", 8.25f, FontStyle.Regular)
     };
 
     // -------------------------------------------------------------------------
-    // Antigravity UI Controls
+    // Antigravity UI Controls (DPI-scaled)
     // -------------------------------------------------------------------------
 
     private sealed class SidebarPanel : Panel
     {
         private readonly Bitmap _brandBitmap;
         private ThemePalette _palette = ThemeHelper.Light;
+        private float _scale = 1f;
 
         public SidebarPanel(Bitmap brandBitmap)
         {
@@ -789,9 +960,10 @@ internal sealed class SettingsForm : Form
             DoubleBuffered = true;
         }
 
-        public void UpdateTheme(ThemePalette palette)
+        public void UpdateTheme(ThemePalette palette, float scale)
         {
             _palette = palette;
+            _scale = scale;
             BackColor = palette.SidebarBackground;
             Invalidate();
         }
@@ -803,8 +975,22 @@ internal sealed class SettingsForm : Form
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
 
-            var iconRect = new Rectangle(16, 20, 24, 24);
-            using (GraphicsPath clip = IconHelper.CreateRoundedRect(iconRect, 6f))
+            float s = _scale;
+            int padX = (int)Math.Round(16 * s);
+            int topY = (int)Math.Round(18 * s);
+
+            using var titleFont = new Font("Segoe UI", 11f, FontStyle.Bold);
+            using var subFont = new Font("Segoe UI", 8.25f, FontStyle.Regular);
+
+            Size titleSz = TextRenderer.MeasureText(g, "QuickUp", titleFont, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding);
+            Size subSz = TextRenderer.MeasureText(g, "Settings", subFont, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding);
+
+            int textBlockH = titleSz.Height + subSz.Height;
+            int iconSize = (int)Math.Round(26 * s);
+            int iconY = topY + Math.Max(0, (textBlockH - iconSize) / 2);
+
+            var iconRect = new Rectangle(padX, iconY, iconSize, iconSize);
+            using (GraphicsPath clip = IconHelper.CreateRoundedRect(iconRect, 6f * s))
             {
                 GraphicsState state = g.Save();
                 g.SetClip(clip);
@@ -812,23 +998,24 @@ internal sealed class SettingsForm : Form
                 g.Restore(state);
             }
 
-            using var titleFont = new Font("Segoe UI", 11f, FontStyle.Bold);
+            int textX = iconRect.Right + (int)Math.Round(10 * s);
+            int textW = Math.Max(40, Width - textX - (int)Math.Round(10 * s));
+
             TextRenderer.DrawText(
                 g,
                 "QuickUp",
                 titleFont,
-                new Rectangle(48, 16, 130, 20),
+                new Rectangle(textX, topY, textW, titleSz.Height),
                 _palette.TextPrimary,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPadding);
 
-            using var subFont = new Font("Segoe UI", 8f, FontStyle.Regular);
             TextRenderer.DrawText(
                 g,
                 "Settings",
                 subFont,
-                new Rectangle(48, 34, 130, 16),
+                new Rectangle(textX, topY + titleSz.Height, textW, subSz.Height),
                 _palette.TextMuted,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                TextFormatFlags.Left | TextFormatFlags.Top | TextFormatFlags.NoPadding);
 
             using var borderPen = new Pen(_palette.Border, 1f);
             g.DrawLine(borderPen, Width - 1, 0, Width - 1, Height);
@@ -840,6 +1027,7 @@ internal sealed class SettingsForm : Form
         private readonly TablerIcon _icon;
         private readonly string _label;
         private ThemePalette _palette = ThemeHelper.Light;
+        private float _scale = 1f;
         private bool _hovered;
         private bool _active;
 
@@ -872,9 +1060,10 @@ internal sealed class SettingsForm : Form
             Cursor = Cursors.Hand;
         }
 
-        public void UpdateTheme(ThemePalette palette)
+        public void UpdateTheme(ThemePalette palette, float scale)
         {
             _palette = palette;
+            _scale = scale;
             Invalidate();
         }
 
@@ -897,23 +1086,27 @@ internal sealed class SettingsForm : Form
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
+            float s = _scale;
             if (_active || _hovered)
             {
                 Color bg = _active ? _palette.SelectedBackground : _palette.BackgroundHover;
-                using GraphicsPath pill = IconHelper.CreateRoundedRect(new RectangleF(0, 0, Width - 1, Height - 1), 8f);
+                using GraphicsPath pill = IconHelper.CreateRoundedRect(new RectangleF(0, 0, Width - 1, Height - 1), 8f * s);
                 using var brush = new SolidBrush(bg);
                 g.FillPath(brush, pill);
             }
 
             Color fg = _active ? _palette.SelectedForeground : _hovered ? _palette.TextPrimary : _palette.TextSecondary;
-            TablerIcons.Draw(g, _icon, 12f, (Height - 17f) / 2f, 17f, fg, strokeWidth24: 1.9f);
+            float iconSize = 17f * s;
+            float iconX = 12f * s;
+            TablerIcons.Draw(g, _icon, iconX, (Height - iconSize) / 2f, iconSize, fg, strokeWidth24: 1.9f);
 
+            int textX = (int)Math.Round(iconX + iconSize + 10f * s);
             using var font = new Font("Segoe UI", 9.5f, _active ? FontStyle.Bold : FontStyle.Regular);
             TextRenderer.DrawText(
                 g,
                 _label,
                 font,
-                new Rectangle(38, 0, Width - 46, Height),
+                new Rectangle(textX, 0, Math.Max(20, Width - textX - (int)Math.Round(8 * s)), Height),
                 fg,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
         }
@@ -946,15 +1139,17 @@ internal sealed class SettingsForm : Form
     private sealed class RoundedCard : Panel
     {
         private ThemePalette _palette = ThemeHelper.Light;
+        private float _scale = 1f;
 
         public RoundedCard()
         {
             DoubleBuffered = true;
         }
 
-        public void UpdateTheme(ThemePalette palette)
+        public void UpdateTheme(ThemePalette palette, float scale)
         {
             _palette = palette;
+            _scale = scale;
             BackColor = palette.CardBackground;
             Invalidate();
         }
@@ -968,7 +1163,7 @@ internal sealed class SettingsForm : Form
             g.FillRectangle(outerBrush, ClientRectangle);
 
             var rect = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            using GraphicsPath path = IconHelper.CreateRoundedRect(rect, 10f);
+            using GraphicsPath path = IconHelper.CreateRoundedRect(rect, 10f * _scale);
             using var cardBrush = new SolidBrush(_palette.CardBackground);
             using var borderPen = new Pen(_palette.Border, 1f);
             g.FillPath(cardBrush, path);
@@ -980,16 +1175,18 @@ internal sealed class SettingsForm : Form
     {
         private Color _fill = Color.White;
         private Color _border = ThemeHelper.Light.Border;
+        private float _scale = 1f;
 
         public PreviewTilePanel()
         {
             DoubleBuffered = true;
         }
 
-        public void UpdateAppearance(Color fill, Color border)
+        public void UpdateAppearance(Color fill, Color border, float scale)
         {
             _fill = fill;
             _border = border;
+            _scale = scale;
             BackColor = fill;
             Invalidate();
         }
@@ -1000,7 +1197,7 @@ internal sealed class SettingsForm : Form
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
             var rect = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            using GraphicsPath path = IconHelper.CreateRoundedRect(rect, 8f);
+            using GraphicsPath path = IconHelper.CreateRoundedRect(rect, 8f * _scale);
             using var fillBrush = new SolidBrush(_fill);
             using var borderPen = new Pen(_border, 1f);
             g.FillPath(fillBrush, path);
@@ -1013,6 +1210,7 @@ internal sealed class SettingsForm : Form
         private readonly TablerIcon _icon;
         private readonly string _title;
         private ThemePalette _palette = ThemeHelper.Light;
+        private float _scale = 1f;
 
         public IconHeadingRow(TablerIcon icon, string title)
         {
@@ -1028,24 +1226,28 @@ internal sealed class SettingsForm : Form
             BackColor = Color.Transparent;
         }
 
-        public void UpdateTheme(ThemePalette palette)
+        public void UpdateTheme(ThemePalette palette, float scale)
         {
             _palette = palette;
+            _scale = scale;
             Invalidate();
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
-            TablerIcons.Draw(g, _icon, 0f, (Height - 16f) / 2f, 16f, _palette.AccentBlue, strokeWidth24: 2.0f);
+            float iconSize = 16f * _scale;
+            TablerIcons.Draw(g, _icon, 0f, (Height - iconSize) / 2f, iconSize, _palette.AccentBlue, strokeWidth24: 2.0f);
+
+            int textX = (int)Math.Round(iconSize + 7f * _scale);
             using var font = new Font("Segoe UI", 9.5f, FontStyle.Bold);
             TextRenderer.DrawText(
                 g,
                 _title,
                 font,
-                new Rectangle(22, 0, Width - 22, Height),
+                new Rectangle(textX, 0, Math.Max(20, Width - textX), Height),
                 _palette.TextPrimary,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
     }
 
@@ -1061,6 +1263,7 @@ internal sealed class SettingsForm : Form
         private readonly ModernButtonKind _kind;
         private readonly TablerIcon? _icon;
         private ThemePalette _palette = ThemeHelper.Light;
+        private float _scale = 1f;
         private bool _hovered;
         private bool _pressed;
         private bool _isDefault;
@@ -1084,6 +1287,17 @@ internal sealed class SettingsForm : Form
             Cursor = Cursors.Hand;
         }
 
+        public Size MeasurePreferredSize(float scale)
+        {
+            using var font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            Size textSz = TextRenderer.MeasureText(Text, font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding);
+            int padX = (int)Math.Round((_icon.HasValue ? 46f : 32f) * scale);
+            int minW = (int)Math.Round(90f * scale);
+            int w = Math.Max(minW, textSz.Width + padX);
+            int h = Math.Max((int)Math.Round(34f * scale), textSz.Height + (int)Math.Round(16f * scale));
+            return new Size(w, h);
+        }
+
         public void NotifyDefault(bool value)
         {
             _isDefault = value;
@@ -1098,9 +1312,10 @@ internal sealed class SettingsForm : Form
             }
         }
 
-        public void UpdateTheme(ThemePalette palette)
+        public void UpdateTheme(ThemePalette palette, float scale)
         {
             _palette = palette;
+            _scale = scale;
             Invalidate();
         }
 
@@ -1153,8 +1368,9 @@ internal sealed class SettingsForm : Form
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
+            float s = _scale;
             var rect = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            using GraphicsPath path = IconHelper.CreateRoundedRect(rect, 8f);
+            using GraphicsPath path = IconHelper.CreateRoundedRect(rect, 8f * s);
 
             Color bg;
             Color fg;
@@ -1192,19 +1408,24 @@ internal sealed class SettingsForm : Form
             }
 
             using var font = new Font("Segoe UI", 9f, FontStyle.Bold);
+            Size textSize = TextRenderer.MeasureText(g, Text, font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding);
+
             if (_icon.HasValue)
             {
-                Size textSize = TextRenderer.MeasureText(g, Text, font);
-                float totalW = 15f + 6f + textSize.Width;
-                float startX = Math.Max(8f, (Width - totalW) / 2f);
-                TablerIcons.Draw(g, _icon.Value, startX, (Height - 15f) / 2f, 15f, fg, strokeWidth24: 2.0f);
+                float iconSize = 15f * s;
+                float gap = 7f * s;
+                float totalW = iconSize + gap + textSize.Width;
+                float startX = Math.Max(8f * s, (Width - totalW) / 2f);
+                TablerIcons.Draw(g, _icon.Value, startX, (Height - iconSize) / 2f, iconSize, fg, strokeWidth24: 2.0f);
+
+                int textX = (int)Math.Round(startX + iconSize + gap);
                 TextRenderer.DrawText(
                     g,
                     Text,
                     font,
-                    new Rectangle((int)(startX + 20f), 0, Width - (int)(startX + 22f), Height),
+                    new Rectangle(textX, 0, Math.Max(10, Width - textX - (int)Math.Round(6f * s)), Height),
                     fg,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             }
             else
             {
@@ -1214,7 +1435,7 @@ internal sealed class SettingsForm : Form
                     font,
                     ClientRectangle,
                     fg,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             }
         }
     }
@@ -1225,6 +1446,7 @@ internal sealed class SettingsForm : Form
     {
         private readonly List<SegmentOption<T>> _options;
         private ThemePalette _palette = ThemeHelper.Light;
+        private float _scale = 1f;
         private T? _selectedValue;
         private int _hoveredIndex = -1;
 
@@ -1261,9 +1483,10 @@ internal sealed class SettingsForm : Form
             Cursor = Cursors.Hand;
         }
 
-        public void UpdateTheme(ThemePalette palette)
+        public void UpdateTheme(ThemePalette palette, float scale)
         {
             _palette = palette;
+            _scale = scale;
             Invalidate();
         }
 
@@ -1308,9 +1531,10 @@ internal sealed class SettingsForm : Form
 
         private int HitTest(Point pt)
         {
-            if (_options.Count == 0 || Width <= 0) return -1;
-            float segW = (Width - 6f) / _options.Count;
-            int idx = (int)((pt.X - 3f) / segW);
+            float pad = 3f * _scale;
+            if (_options.Count == 0 || Width <= pad * 2) return -1;
+            float segW = (Width - pad * 2) / _options.Count;
+            int idx = (int)((pt.X - pad) / segW);
             return idx >= 0 && idx < _options.Count ? idx : -1;
         }
 
@@ -1319,8 +1543,11 @@ internal sealed class SettingsForm : Form
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
+            float s = _scale;
+            float pad = 3f * s;
+
             var trackRect = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            using (GraphicsPath trackPath = IconHelper.CreateRoundedRect(trackRect, 8f))
+            using (GraphicsPath trackPath = IconHelper.CreateRoundedRect(trackRect, 8f * s))
             using (var trackBrush = new SolidBrush(_palette.CardSubtle))
             using (var trackPen = new Pen(_palette.Border, 1f))
             {
@@ -1329,7 +1556,7 @@ internal sealed class SettingsForm : Form
             }
 
             if (_options.Count == 0) return;
-            float segW = (Width - 6f) / _options.Count;
+            float segW = (Width - pad * 2) / _options.Count;
 
             for (int i = 0; i < _options.Count; i++)
             {
@@ -1337,10 +1564,10 @@ internal sealed class SettingsForm : Form
                 bool selected = EqualityComparer<T>.Default.Equals(_selectedValue, opt.Value);
                 bool hovered = i == _hoveredIndex && !selected;
 
-                var segRect = new RectangleF(3f + i * segW, 3f, segW, Height - 6f);
+                var segRect = new RectangleF(pad + i * segW, pad, segW, Height - pad * 2);
                 if (selected || hovered)
                 {
-                    using GraphicsPath segPath = IconHelper.CreateRoundedRect(segRect, 6f);
+                    using GraphicsPath segPath = IconHelper.CreateRoundedRect(segRect, 6f * s);
                     Color segFill = selected ? _palette.CardBackground : _palette.BackgroundHover;
                     using var segBrush = new SolidBrush(segFill);
                     g.FillPath(segBrush, segPath);
@@ -1361,17 +1588,21 @@ internal sealed class SettingsForm : Form
                 using var font = new Font("Segoe UI", 8.75f, selected ? FontStyle.Bold : FontStyle.Regular);
                 if (opt.Icon.HasValue)
                 {
-                    Size textSize = TextRenderer.MeasureText(g, opt.Label, font);
-                    float totalW = 14f + 6f + textSize.Width;
-                    float startX = segRect.Left + Math.Max(4f, (segRect.Width - totalW) / 2f);
-                    TablerIcons.Draw(g, opt.Icon.Value, startX, segRect.Top + (segRect.Height - 14f) / 2f, 14f, fg, strokeWidth24: 2.0f);
+                    float iconSize = 14f * s;
+                    float gap = 6f * s;
+                    Size textSize = TextRenderer.MeasureText(g, opt.Label, font, new Size(int.MaxValue, int.MaxValue), TextFormatFlags.NoPadding);
+                    float totalW = iconSize + gap + textSize.Width;
+                    float startX = segRect.Left + Math.Max(4f * s, (segRect.Width - totalW) / 2f);
+                    TablerIcons.Draw(g, opt.Icon.Value, startX, segRect.Top + (segRect.Height - iconSize) / 2f, iconSize, fg, strokeWidth24: 2.0f);
+
+                    int textX = (int)Math.Round(startX + iconSize + gap);
                     TextRenderer.DrawText(
                         g,
                         opt.Label,
                         font,
-                        new Rectangle((int)(startX + 19f), (int)segRect.Top, (int)Math.Max(10f, segRect.Right - startX - 20f), (int)segRect.Height),
+                        new Rectangle(textX, (int)segRect.Top, (int)Math.Max(10f, segRect.Right - textX - 2f * s), (int)segRect.Height),
                         fg,
-                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
                 }
                 else
                 {
@@ -1381,7 +1612,7 @@ internal sealed class SettingsForm : Form
                         font,
                         Rectangle.Round(segRect),
                         fg,
-                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
                 }
             }
         }
@@ -1392,6 +1623,7 @@ internal sealed class SettingsForm : Form
         private readonly TextBox _inner;
         private readonly TablerIcon? _leadingIcon;
         private ThemePalette _palette = ThemeHelper.Light;
+        private float _scale = 1f;
         private bool _focused;
 
         [AllowNull]
@@ -1409,16 +1641,16 @@ internal sealed class SettingsForm : Form
             set => _inner.PlaceholderText = value;
         }
 
+        public int PreferredControlHeight => Math.Max((int)Math.Round(36 * _scale), _inner.PreferredHeight + (int)Math.Round(14 * _scale));
+
         public OutlinedTextBox(TablerIcon? leadingIcon)
         {
             _leadingIcon = leadingIcon;
             DoubleBuffered = true;
-            Padding = new Padding(leadingIcon.HasValue ? 32 : 11, 7, 11, 7);
 
             _inner = new TextBox
             {
                 BorderStyle = BorderStyle.None,
-                Dock = DockStyle.Fill,
                 Font = new Font("Segoe UI", 9.5f, FontStyle.Regular)
             };
 
@@ -1426,18 +1658,36 @@ internal sealed class SettingsForm : Form
             _inner.LostFocus += (_, _) => { _focused = false; Invalidate(); };
 
             Controls.Add(_inner);
+            Resize += (_, _) => LayoutInnerTextBox();
             Click += (_, _) => _inner.Focus();
         }
 
         public void FocusInput() => _inner.Focus();
 
-        public void UpdateTheme(ThemePalette palette)
+        public void ClearSelection()
+        {
+            _inner.SelectionStart = _inner.TextLength;
+            _inner.SelectionLength = 0;
+        }
+
+        public void UpdateTheme(ThemePalette palette, float scale)
         {
             _palette = palette;
+            _scale = scale;
             BackColor = palette.BackgroundInput;
             _inner.BackColor = palette.BackgroundInput;
             _inner.ForeColor = palette.TextPrimary;
+            LayoutInnerTextBox();
             Invalidate();
+        }
+
+        private void LayoutInnerTextBox()
+        {
+            int leftPad = (int)Math.Round((_leadingIcon.HasValue ? 34f : 12f) * _scale);
+            int rightPad = (int)Math.Round(12f * _scale);
+            int innerH = Math.Max(14, _inner.PreferredHeight);
+            int innerY = Math.Max(4, (Height - innerH) / 2);
+            _inner.SetBounds(leftPad, innerY, Math.Max(20, Width - leftPad - rightPad), innerH);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -1445,8 +1695,9 @@ internal sealed class SettingsForm : Form
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
+            float s = _scale;
             var rect = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            using GraphicsPath path = IconHelper.CreateRoundedRect(rect, 8f);
+            using GraphicsPath path = IconHelper.CreateRoundedRect(rect, 8f * s);
             using var fill = new SolidBrush(_palette.BackgroundInput);
             g.FillPath(fill, path);
 
@@ -1456,8 +1707,9 @@ internal sealed class SettingsForm : Form
 
             if (_leadingIcon.HasValue)
             {
+                float iconSize = 15f * s;
                 Color iconColor = _focused ? _palette.AccentBlue : _palette.TextMuted;
-                TablerIcons.Draw(g, _leadingIcon.Value, 10f, (Height - 15f) / 2f, 15f, iconColor, strokeWidth24: 1.9f);
+                TablerIcons.Draw(g, _leadingIcon.Value, 11f * s, (Height - iconSize) / 2f, iconSize, iconColor, strokeWidth24: 1.9f);
             }
         }
     }
@@ -1466,6 +1718,7 @@ internal sealed class SettingsForm : Form
     {
         private readonly Bitmap _thumbnail;
         private ThemePalette _palette = ThemeHelper.Light;
+        private float _scale = 1f;
         private bool _hovered;
         private bool _selected;
 
@@ -1488,7 +1741,7 @@ internal sealed class SettingsForm : Form
         public PresetIconButton(string presetKey)
         {
             PresetKey = presetKey;
-            _thumbnail = IconHelper.RenderPresetIconBitmap(presetKey, 48);
+            _thumbnail = IconHelper.RenderPresetIconBitmap(presetKey, 64);
             SetStyle(
                 ControlStyles.AllPaintingInWmPaint |
                 ControlStyles.UserPaint |
@@ -1498,9 +1751,10 @@ internal sealed class SettingsForm : Form
             Cursor = Cursors.Hand;
         }
 
-        public void UpdateTheme(ThemePalette palette)
+        public void UpdateTheme(ThemePalette palette, float scale)
         {
             _palette = palette;
+            _scale = scale;
             Invalidate();
         }
 
@@ -1537,7 +1791,7 @@ internal sealed class SettingsForm : Form
                     : (_palette.IsDark ? Color.FromArgb(93, 64, 55) : Color.FromArgb(255, 224, 178));
 
             var rect = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
-            using (GraphicsPath path = IconHelper.CreateRoundedRect(rect, 8f))
+            using (GraphicsPath path = IconHelper.CreateRoundedRect(rect, 8f * _scale))
             using (var bgBrush = new SolidBrush(bg))
             using (var borderPen = new Pen(border, 1f))
             {
@@ -1545,7 +1799,8 @@ internal sealed class SettingsForm : Form
                 g.DrawPath(borderPen, path);
             }
 
-            int iconSize = Math.Min(Width, Height) - 10;
+            int pad = (int)Math.Round(10 * _scale);
+            int iconSize = Math.Max(16, Math.Min(Width, Height) - pad);
             int ix = (Width - iconSize) / 2;
             int iy = (Height - iconSize) / 2;
             g.DrawImage(_thumbnail, ix, iy, iconSize, iconSize);
@@ -1564,6 +1819,7 @@ internal sealed class SettingsForm : Form
     private sealed class ToggleSwitch : Control
     {
         private ThemePalette _palette = ThemeHelper.Light;
+        private float _scale = 1f;
         private bool _checked;
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -1593,9 +1849,10 @@ internal sealed class SettingsForm : Form
             Cursor = Cursors.Hand;
         }
 
-        public void UpdateTheme(ThemePalette palette)
+        public void UpdateTheme(ThemePalette palette, float scale)
         {
             _palette = palette;
+            _scale = scale;
             Invalidate();
         }
 
@@ -1610,7 +1867,8 @@ internal sealed class SettingsForm : Form
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            var trackRect = new RectangleF(1f, 1f, Width - 2f, Height - 2f);
+            float pad = 1f * _scale;
+            var trackRect = new RectangleF(pad, pad, Width - pad * 2f, Height - pad * 2f);
             Color trackColor = _checked ? _palette.AccentBlue : _palette.BorderHover;
 
             using (GraphicsPath trackPath = IconHelper.CreateRoundedRect(trackRect, trackRect.Height / 2f))
@@ -1619,9 +1877,10 @@ internal sealed class SettingsForm : Form
                 g.FillPath(trackBrush, trackPath);
             }
 
-            float thumbSize = trackRect.Height - 6f;
-            float thumbX = _checked ? trackRect.Right - thumbSize - 3f : trackRect.Left + 3f;
-            float thumbY = trackRect.Top + 3f;
+            float inset = 3f * _scale;
+            float thumbSize = trackRect.Height - (inset * 2f);
+            float thumbX = _checked ? trackRect.Right - thumbSize - inset : trackRect.Left + inset;
+            float thumbY = trackRect.Top + inset;
             Color thumbColor = _checked && _palette.IsDark ? _palette.TextOnPrimary : Color.White;
 
             using var thumbBrush = new SolidBrush(thumbColor);
